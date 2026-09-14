@@ -45,4 +45,10 @@ describe("incident coordination API", () => {
     expect(location.lat).toBe(13.0827);
     expect(received).toHaveLength(1);
   });
+
+  it("protects audit history and report exports behind coordinator access", async () => {
+    const caller = appRouter.createCaller(contextFor("user"));
+    await expect(caller.incident.auditLogs({ code: "CX1008" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.incident.exportReport({ code: "CX1008" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

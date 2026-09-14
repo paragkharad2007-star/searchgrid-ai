@@ -15,6 +15,13 @@
       "when": 1789373100981,
       "tag": "0001_motionless_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1789374022520,
+      "tag": "0002_wild_talon",
+      "breakpoints": true
     }
   ]
 }

@@ -35,7 +35,17 @@ export const sightings = mysqlTable("sightings", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const auditLogs = mysqlTable("auditLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  incidentCode: varchar("incidentCode", { length: 32 }).notNull(),
+  actor: varchar("actor", { length: 120 }).notNull(),
+  action: varchar("action", { length: 80 }).notNull(),
+  detail: text("detail").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Incident = typeof incidents.$inferSelect;
 export type Sighting = typeof sightings.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;

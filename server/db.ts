@@ -1,6 +1,6 @@
 import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, incidents, sightings, users } from "../drizzle/schema";
+import { auditLogs, InsertUser, incidents, sightings, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -91,4 +91,18 @@ export async function resolveIncident(code: string) {
   if (!db) return undefined;
   await db.update(incidents).set({ status: "resolved" }).where(eq(incidents.code, code));
   return getIncidentByCode(code);
+}
+
+export async function writeAuditLog(input: { incidentCode: string; actor: string; action: string; detail: string }) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(auditLogs).values(input);
+  const rows = await db.select().from(auditLogs).where(eq(auditLogs.incidentCode, input.incidentCode)).orderBy(desc(auditLogs.createdAt)).limit(1);
+  return rows[0];
+}
+
+export async function listAuditLogs(code: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(auditLogs).where(eq(auditLogs.incidentCode, code)).orderBy(desc(auditLogs.createdAt)).limit(100);
 }
