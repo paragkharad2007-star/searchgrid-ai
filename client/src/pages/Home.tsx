@@ -117,7 +117,7 @@ function requestUrgentNotifications(onDone: (message: string) => void) {
 }
 
 function formatClock(date: Date) {
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
 }
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -154,7 +154,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
   const [selectedId, setSelectedId] = useState("B");
   const [sightings, setSightings] = useState<Sighting[]>(INITIAL_SIGHTINGS);
   const [elapsed, setElapsed] = useState(2);
-  const [now, setNow] = useState(new Date("2026-09-14T13:17:43+05:30"));
+  const [now, setNow] = useState(() => new Date());
   const [showIncidentForm, setShowIncidentForm] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [toast, setToast] = useState("");
@@ -191,7 +191,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
   }, [incidentQuery.data]);
 
   useEffect(() => {
-    const clock = window.setInterval(() => setNow((value) => new Date(value.getTime() + 1000)), 1000);
+    const clock = window.setInterval(() => setNow(new Date()), 1000);
     const demo = window.setInterval(() => {
       setElapsed((value) => value + 1);
       setZones((current) => current.map((zone) => {
