@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -45,6 +45,10 @@ import {
   Zap,
 } from "lucide-react";
 import { calculateSearchPriority, priorityForScore } from "@shared/searchgrid";
+import LiveVenueMap from "@/components/LiveVenueMap";
+import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { useIncidentRealtime, type IncidentRealtimeEvent } from "@/hooks/useIncidentRealtime";
 
 type Mode = "command" | "volunteer";
 type ZoneStatus = "searching" | "queued" | "covered" | "alert";
@@ -124,54 +128,15 @@ function ScoreBar({ score, compact = false }: { score: number; compact?: boolean
   );
 }
 
-function VenueMap({ zones, selectedId, onSelect, onMarkSearched }: { zones: Zone[]; selectedId: string; onSelect: (zone: Zone) => void; onMarkSearched: (id: string) => void }) {
-  const volunteerPoints = [
-    { id: "V07", x: 45, y: 24, color: "#9ff7d2" },
-    { id: "V03", x: 68, y: 24, color: "#ffd166" },
-    { id: "V11", x: 85, y: 25, color: "#ff896f" },
-    { id: "V02", x: 18, y: 75, color: "#9ff7d2" },
-    { id: "V14", x: 18, y: 48, color: "#ffd166" },
-    { id: "V09", x: 41, y: 52, color: "#9ff7d2" },
-    { id: "V18", x: 65, y: 52, color: "#9ff7d2" },
-    { id: "V21", x: 85, y: 51, color: "#7acbff" },
-  ];
-
-  return (
-    <div className="venue-map" aria-label="City Festival Ground search map">
-      <div className="map-grid" />
-      <div className="map-compass"><Compass size={15} /><span>N</span></div>
-      <div className="map-controls"><button aria-label="Center map"><LocateFixed size={15} /></button><button aria-label="Map layers"><Layers3 size={15} /></button></div>
-      <div className="map-route route-a" /><div className="map-route route-b" /><div className="map-route route-c" />
-      <div className="map-feature stage">MAIN STAGE <span>LIVE EVENT</span></div>
-      <div className="map-feature gate">MAIN GATE</div>
-      <div className="map-feature gate-b">GATE B</div>
-      <div className="map-feature wc">RESTROOMS</div>
-      <div className="map-feature medical">MEDICAL</div>
-      <div className="map-feature parking">PARKING LOOP</div>
-      {zones.map((zone) => (
-        <button
-          key={zone.id}
-          className={cn("map-zone", `map-zone-${zone.color}`, zone.status === "covered" && "map-zone-covered", selectedId === zone.id && "map-zone-selected")}
-          style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%` }}
-          onClick={() => onSelect(zone)}
-          aria-label={`Zone ${zone.id}, ${zone.name}, ${zone.score}% priority`}
-        >
-          <span className="zone-code">{zone.id}</span>
-          <span className="zone-name">{zone.name}</span>
-          <span className="zone-score">{zone.score}%</span>
-          {zone.status === "covered" && <Check size={12} strokeWidth={3} />}
-        </button>
-      ))}
-      <div className="last-seen-marker"><span className="pulse-ring" /><span className="marker-dot" /><div><strong>LAST SEEN</strong><small>Food Court · 13:15</small></div></div>
-      {volunteerPoints.map((point) => <div className="volunteer-marker" key={point.id} style={{ left: `${point.x}%`, top: `${point.y}%` }}><span style={{ background: point.color }} /><strong>{point.id}</strong></div>)}
-      <div className="map-label exit-label">EXIT CORRIDOR <ArrowUpRight size={12} /></div>
-      <div className="map-legend"><span><i className="legend-dot high" /> High</span><span><i className="legend-dot medium" /> Medium</span><span><i className="legend-dot low" /> Low</span><span><i className="legend-dot volunteer" /> Volunteer</span></div>
-      <div className="map-scale">100 m</div>
-    </div>
-  );
+function VenueMap({ zones, selectedId, onSelect }: { zones: Zone[]; selectedId: string; onSelect: (zone: Zone) => void }) {
+  return <LiveVenueMap zones={zones} selectedId={selectedId} onSelect={(mapZone) => onSelect(zones.find((zone) => zone.id === mapZone.id) ?? zones[0])} />;
 }
 
 function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => void; mode: Mode }) {
+  const { user } = useAuth();
+  const incidentQuery = trpc.incident.current.useQuery();
+  const reportMutation = trpc.incident.reportSighting.useMutation();
+  const markMutation = trpc.incident.markZoneSearched.useMutation();
   const [zones, setZones] = useState<Zone[]>(ZONE_SEEDS);
   const [selectedId, setSelectedId] = useState("B");
   const [sightings, setSightings] = useState<Sighting[]>(INITIAL_SIGHTINGS);
@@ -181,6 +146,30 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [toast, setToast] = useState("");
   const [sightingBoost, setSightingBoost] = useState(12);
+
+  const handleRealtime = useCallback((event: IncidentRealtimeEvent) => {
+    if (event.type === "sighting_reported") {
+      const payload = event.payload as { id?: number; label?: string; zone?: string; source?: string; confidence?: number };
+      setSightings((current) => [{ id: payload.id ?? Date.now(), label: payload.label ?? "Live sighting", location: payload.zone ?? "Venue update", time: "just now", source: payload.source ?? "Live volunteer", confidence: payload.confidence ?? 75 }, ...current].slice(0, 4));
+      setSelectedId("B");
+      setSightingBoost((value) => Math.min(30, value + 4));
+      setToast("Live sighting received · AI priorities recalculated");
+    }
+    if (event.type === "zone_completed") {
+      const zone = String(event.payload.zone ?? "");
+      setZones((current) => current.map((item) => item.id === zone || item.name === zone ? { ...item, status: "covered", score: Math.max(8, item.score - 26), priority: priorityForScore(Math.max(8, item.score - 26)) } : item));
+      setToast(`Live update · ${zone} marked searched`);
+    }
+    if (event.type === "ai_recalculated" || event.type === "assignment_changed") setToast("Live operations update · assignments refreshed");
+  }, []);
+
+  useIncidentRealtime("CX1008", handleRealtime);
+
+  useEffect(() => {
+    const rows = incidentQuery.data?.sightings;
+    if (!rows?.length) return;
+    setSightings(rows.map((row) => ({ id: row.id, label: row.label, location: row.zone, time: new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), source: row.source, confidence: row.confidence })));
+  }, [incidentQuery.data]);
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow((value) => new Date(value.getTime() + 1000)), 1000);
@@ -223,21 +212,25 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
   const markSearched = (id: string) => {
     setZones((current) => current.map((zone) => zone.id === id ? { ...zone, status: "covered", score: Math.max(8, zone.score - 26), priority: priorityForScore(Math.max(8, zone.score - 26)) } : zone));
     setToast(`Zone ${id} marked searched · assignments replanned`);
+    markMutation.mutate({ zone: id }, { onError: () => setToast(`Zone ${id} marked locally · sign in to broadcast to the team`) });
   };
 
   const reportSighting = () => {
     const sighting: Sighting = { id: Date.now(), label: "New possible sighting", location: "Central Lawn · east path", time: "just now", source: "Coordinator demo", confidence: 76 };
     setSightings((current) => [sighting, ...current].slice(0, 4));
     setSelectedId("B");
+    reportMutation.mutate({ zone: sighting.location, label: sighting.label, source: user?.name ?? "Coordinator demo", confidence: sighting.confidence }, { onError: () => setToast("Sighting added locally · sign in to broadcast live") });
     recalculate("new sighting near Central Lawn");
   };
+
+  const roleLabel = user?.role === "admin" ? "COORDINATOR" : user ? "VOLUNTEER" : "DEMO OPS";
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-lockup"><div className="brand-mark"><Crosshair size={21} strokeWidth={2.2} /></div><div><div className="brand-name">SEARCHGRID <span>AI</span></div><div className="brand-subtitle">EMERGENCY SEARCH COORDINATION</div></div></div>
         <div className="topbar-center"><LivePill><span className="status-dot" /> SYSTEM ONLINE</LivePill><span className="incident-label"><Siren size={14} /> MISSING PERSON — ACTIVE</span></div>
-        <div className="topbar-actions"><div className="time-readout"><span>{formatClock(now)}</span><small>LOCAL TIME · UTC+05:30</small></div><button className="icon-button" aria-label="Notifications"><Bell size={17} /><i /></button><button className="avatar-button">OC<span>OPS</span></button></div>
+        <div className="topbar-actions"><div className="time-readout"><span>{formatClock(now)}</span><small>LOCAL TIME · UTC+05:30</small></div><button className="icon-button" aria-label="Notifications"><Bell size={17} /><i /></button><button className="avatar-button">{user?.name?.slice(0, 2).toUpperCase() ?? "OC"}<span>{roleLabel}</span></button></div>
       </header>
 
       <div className="view-switcher"><div className="view-switcher-inner"><button className={cn(mode === "command" && "active")} onClick={() => onModeChange("command")}><Laptop size={15} /> Command Center</button><button className={cn(mode === "volunteer" && "active")} onClick={() => onModeChange("volunteer")}><Smartphone size={15} /> Volunteer PWA</button></div><div className="sync-strip"><Wifi size={13} /> Live sync <span>•</span> Last update {formatClock(now)}</div></div>
@@ -253,7 +246,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
         </div>
 
         <div className="command-grid">
-          <section className="map-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Radio size={13} /> PROBABILITY HEATMAP</div><h2>Venue search grid</h2></div><div className="panel-header-actions"><button className={cn("secondary-button small", isRecalculating && "button-loading")} onClick={() => recalculate("manual refresh")}><RefreshCw size={14} className={cn(isRecalculating && "spin")} /> {isRecalculating ? "Recalculating" : "Recalculate"}</button><button className="icon-button subtle" aria-label="Map options"><Menu size={16} /></button></div></div><div className="map-meta"><span><span className="pulse-dot" /> AI PRIORITIES LIVE</span><span>12 zones · {activeCount} actively searching</span><span>Coverage {coveredCount}/{zones.length}</span></div><VenueMap zones={zones} selectedId={selectedId} onSelect={(zone) => setSelectedId(zone.id)} onMarkSearched={markSearched} /><div className="map-caption"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations.</span><button onClick={() => setToast("The model blends distance, time, crowd flow, pathway, sighting, venue feature and searched-area penalty.")}>How scoring works <ChevronRight size={13} /></button></div></section>
+          <section className="map-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Radio size={13} /> PROBABILITY HEATMAP</div><h2>Venue search grid</h2></div><div className="panel-header-actions"><button className={cn("secondary-button small", isRecalculating && "button-loading")} onClick={() => recalculate("manual refresh")}><RefreshCw size={14} className={cn(isRecalculating && "spin")} /> {isRecalculating ? "Recalculating" : "Recalculate"}</button><button className="icon-button subtle" aria-label="Map options"><Menu size={16} /></button></div></div><div className="map-meta"><span><span className="pulse-dot" /> AI PRIORITIES LIVE</span><span>12 zones · {activeCount} actively searching</span><span>Coverage {coveredCount}/{zones.length}</span></div><VenueMap zones={zones} selectedId={selectedId} onSelect={(zone) => setSelectedId(zone.id)} /><div className="map-caption"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations.</span><button onClick={() => setToast("The model blends distance, time, crowd flow, pathway, sighting, venue feature and searched-area penalty.")}>How scoring works <ChevronRight size={13} /></button></div></section>
 
           <aside className="zone-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Target size={13} /> SELECTED ZONE</div><h2>Zone {selected.id}</h2></div><span className={cn("status-tag", selected.status)}>{selected.status === "searching" ? "SEARCHING" : selected.status === "covered" ? "COVERED" : selected.status === "alert" ? "UPDATED" : "QUEUED"}</span></div><div className="zone-detail-name">{selected.name}</div><div className="priority-score"><span>AI SEARCH PRIORITY</span><strong>{selected.score}%</strong><ScoreBar score={selected.score} /></div><div className="why-block"><div className="why-title"><Sparkles size={14} /> WHY THIS ZONE?</div><ul>{selected.features.map((feature) => <li key={feature}><CheckCircle2 size={14} /> {feature}</li>)}</ul></div><div className="assignment-block"><div className="assignment-label">ASSIGNED SEARCH TEAM <span>{selected.volunteers} volunteers</span></div><div className="assigned-person"><div className="person-avatar">{selected.assigned ?? "—"}</div><div><strong>{selected.assigned ?? "Unassigned"}</strong><small>{selected.status === "searching" ? "On route · 180 m away" : "Available for dispatch"}</small></div><button className="icon-button subtle"><Navigation size={15} /></button></div></div><button className="full-button" onClick={() => markSearched(selected.id)} disabled={selected.status === "covered"}>{selected.status === "covered" ? <><CheckCircle2 size={16} /> Zone already covered</> : <><Check size={16} /> Mark zone searched</>}</button><div className="replan-note"><Zap size={13} /><span>Assignments update automatically when new sighting data arrives.</span></div></aside>
         </div>
@@ -270,13 +263,29 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
 }
 
 function VolunteerView({ onModeChange }: { onModeChange: (mode: Mode) => void }) {
+  const { user } = useAuth();
+  const reportMutation = trpc.incident.reportSighting.useMutation();
+  const markMutation = trpc.incident.markZoneSearched.useMutation();
   const [searched, setSearched] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [offline, setOffline] = useState(false);
   const [toast, setToast] = useState("");
+  const handleRealtime = useCallback((event: IncidentRealtimeEvent) => {
+    if (event.type === "zone_completed") setToast("Command center updated this zone");
+    if (event.type === "assignment_changed") setToast("Assignment changed · refresh your mission");
+  }, []);
+  useIncidentRealtime("CX1008", handleRealtime);
 
-  const completeSearch = () => { setSearched(true); setToast("Zone B marked searched · command center synced"); };
-  return <div className="volunteer-shell"><header className="volunteer-topbar"><button className="volunteer-brand" onClick={() => onModeChange("command")}><span className="brand-mark"><Crosshair size={19} /></span><span>SEARCHGRID <b>AI</b></span></button><div className="volunteer-status"><span className="status-dot" /> {offline ? "OFFLINE MODE" : "LIVE SYNC"}</div><button className="icon-button subtle" onClick={() => setOffline((value) => !value)}>{offline ? <WifiOff size={17} /> : <Wifi size={17} />}</button></header><main className="volunteer-main"><div className="volunteer-incident"><div><span className="eyebrow">ACTIVE SEARCH · CX1008</span><h1>Find Arjun R.</h1><p>City Festival Ground · incident started 13:15</p></div><div className="volunteer-siren"><Siren size={19} /><span>ACTIVE</span></div></div><div className="mission-card"><div className="mission-top"><div><span className="panel-kicker">YOUR ASSIGNMENT</span><h2>Zone B <span>· Food Court</span></h2></div><LivePill tone="red">{searched ? "SEARCHED" : "SEARCH NOW"}</LivePill></div><div className="mission-score"><div className="mission-score-number">86<span>%</span></div><div><strong>AI SEARCH PRIORITY</strong><p>Highest probability area right now</p></div></div><div className="assignment-route"><div className="route-icon"><RouteIcon size={20} /></div><div><strong>180 m to your zone</strong><p>Take the north walkway · approx. 2 min</p></div><button className="primary-button"><Navigation size={16} /> Navigate</button></div><div className="mission-reasons"><span><Check size={13} /> Last seen nearby</span><span><Check size={13} /> High crowd flow</span><span><Check size={13} /> Connected pathway</span></div></div><div className="volunteer-map-mini"><div className="mini-map-grid" /><div className="mini-route" /><div className="mini-location"><span /><small>YOU</small></div><div className="mini-destination"><Target size={17} /><small>ZONE B</small></div><div className="mini-map-label food">FOOD COURT</div><div className="mini-map-label stage">STAGE</div><div className="mini-map-cta"><Compass size={15} /><span>North walkway</span><strong>2 min</strong></div></div><div className="volunteer-actions"><button className="full-button" onClick={completeSearch} disabled={searched}>{searched ? <><CheckCircle2 size={17} /> Search logged</> : <><Check size={17} /> Mark zone searched</>}</button><button className="secondary-button full-button-secondary" onClick={() => setReportOpen(true)}><MessageSquareWarning size={17} /> Report a sighting</button></div><div className="volunteer-status-card"><div className="status-card-row"><IconBadge tone="mint"><BatteryCharging size={16} /></IconBadge><div><strong>Device ready</strong><span>Battery 84% · GPS accuracy high</span></div><CheckCircle2 size={16} className="check-green" /></div><div className="status-card-row"><IconBadge tone="blue"><RefreshCw size={16} /></IconBadge><div><strong>{offline ? "Waiting to sync" : "All changes synced"}</strong><span>{offline ? "Will send when connection returns" : "Last sync just now"}</span></div><span className={cn("sync-indicator", offline && "sync-offline")} /></div></div><div className="volunteer-disclaimer"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations. Stay with your team and follow coordinator instructions.</span></div></main><nav className="volunteer-nav"><button className="active"><Target size={18} /><span>Mission</span></button><button><MapPinned size={18} /><span>Map</span></button><button onClick={() => onModeChange("command")}><Radio size={18} /><span>Command</span></button><button><UserRound size={18} /><span>Profile</span></button></nav>{toast && <div className="toast mobile-toast"><CheckCircle2 size={17} /><span>{toast}</span></div>}{reportOpen && <div className="modal-backdrop" onClick={() => setReportOpen(false)}><div className="incident-modal volunteer-report-modal" onClick={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="panel-kicker">QUICK REPORT</div><h2>Report a sighting</h2></div><button className="icon-button subtle" onClick={() => setReportOpen(false)}><X size={17} /></button></div><button className="report-option active"><CircleDot size={17} /><span><strong>Possible sighting</strong><small>Someone matching the description</small></span><Check size={16} /></button><button className="report-option"><MapPinned size={17} /><span><strong>Area needs help</strong><small>Request another volunteer here</small></span></button><button className="report-option"><AlertTriangle size={17} /><span><strong>Safety issue</strong><small>Blocked path or urgent concern</small></span></button><button className="full-button" onClick={() => { setReportOpen(false); setToast("Report queued for the command center"); }}><Send size={16} /> Send report</button></div></div>}</div>;
+  const completeSearch = () => {
+    setSearched(true);
+    setToast("Zone B marked searched · command center synced");
+    if (!offline) markMutation.mutate({ zone: "B" }, { onError: () => setToast("Search logged locally · sign in to broadcast to the team") });
+  };
+  const startNavigation = () => {
+    if (!navigator.geolocation) { setToast("GPS is not available on this device"); return; }
+    navigator.geolocation.getCurrentPosition(() => setToast("GPS locked · route to Zone B is active"), () => setToast("GPS permission needed for live navigation"), { enableHighAccuracy: true, timeout: 5000 });
+  };
+  return <div className="volunteer-shell"><header className="volunteer-topbar"><button className="volunteer-brand" onClick={() => onModeChange("command")}><span className="brand-mark"><Crosshair size={19} /></span><span>SEARCHGRID <b>AI</b></span></button><div className="volunteer-status"><span className="status-dot" /> {offline ? "OFFLINE MODE" : `LIVE SYNC · ${user?.name ?? "DEMO"}`}</div><button className="icon-button subtle" onClick={() => setOffline((value) => !value)}>{offline ? <WifiOff size={17} /> : <Wifi size={17} />}</button></header><main className="volunteer-main"><div className="volunteer-incident"><div><span className="eyebrow">ACTIVE SEARCH · CX1008</span><h1>Find Arjun R.</h1><p>City Festival Ground · incident started 13:15</p></div><div className="volunteer-siren"><Siren size={19} /><span>ACTIVE</span></div></div><div className="mission-card"><div className="mission-top"><div><span className="panel-kicker">YOUR ASSIGNMENT</span><h2>Zone B <span>· Food Court</span></h2></div><LivePill tone="red">{searched ? "SEARCHED" : "SEARCH NOW"}</LivePill></div><div className="mission-score"><div className="mission-score-number">86<span>%</span></div><div><strong>AI SEARCH PRIORITY</strong><p>Highest probability area right now</p></div></div><div className="assignment-route"><div className="route-icon"><RouteIcon size={20} /></div><div><strong>180 m to your zone</strong><p>Take the north walkway · approx. 2 min</p></div><button className="primary-button" onClick={startNavigation}><Navigation size={16} /> Navigate</button></div><div className="mission-reasons"><span><Check size={13} /> Last seen nearby</span><span><Check size={13} /> High crowd flow</span><span><Check size={13} /> Connected pathway</span></div></div><div className="volunteer-map-mini"><div className="mini-map-grid" /><div className="mini-route" /><div className="mini-location"><span /><small>YOU</small></div><div className="mini-destination"><Target size={17} /><small>ZONE B</small></div><div className="mini-map-label food">FOOD COURT</div><div className="mini-map-label stage">STAGE</div><div className="mini-map-cta"><Compass size={15} /><span>North walkway</span><strong>2 min</strong></div></div><div className="volunteer-actions"><button className="full-button" onClick={completeSearch} disabled={searched}>{searched ? <><CheckCircle2 size={17} /> Search logged</> : <><Check size={17} /> Mark zone searched</>}</button><button className="secondary-button full-button-secondary" onClick={() => setReportOpen(true)}><MessageSquareWarning size={17} /> Report a sighting</button></div><div className="volunteer-status-card"><div className="status-card-row"><IconBadge tone="mint"><BatteryCharging size={16} /></IconBadge><div><strong>Device ready</strong><span>Battery 84% · GPS accuracy high</span></div><CheckCircle2 size={16} className="check-green" /></div><div className="status-card-row"><IconBadge tone="blue"><RefreshCw size={16} /></IconBadge><div><strong>{offline ? "Waiting to sync" : "All changes synced"}</strong><span>{offline ? "Will send when connection returns" : "Last sync just now"}</span></div><span className={cn("sync-indicator", offline && "sync-offline")} /></div></div><div className="volunteer-disclaimer"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations. Stay with your team and follow coordinator instructions.</span></div></main><nav className="volunteer-nav"><button className="active"><Target size={18} /><span>Mission</span></button><button><MapPinned size={18} /><span>Map</span></button><button onClick={() => onModeChange("command")}><Radio size={18} /><span>Command</span></button><button><UserRound size={18} /><span>Profile</span></button></nav>{toast && <div className="toast mobile-toast"><CheckCircle2 size={17} /><span>{toast}</span></div>}{reportOpen && <div className="modal-backdrop" onClick={() => setReportOpen(false)}><div className="incident-modal volunteer-report-modal" onClick={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="panel-kicker">QUICK REPORT</div><h2>Report a sighting</h2></div><button className="icon-button subtle" onClick={() => setReportOpen(false)}><X size={17} /></button></div><button className="report-option active"><CircleDot size={17} /><span><strong>Possible sighting</strong><small>Someone matching the description</small></span><Check size={16} /></button><button className="report-option"><MapPinned size={17} /><span><strong>Area needs help</strong><small>Request another volunteer here</small></span></button><button className="report-option"><AlertTriangle size={17} /><span><strong>Safety issue</strong><small>Blocked path or urgent concern</small></span></button><button className="full-button" onClick={() => { reportMutation.mutate({ zone: "Food Court", label: "Possible sighting", source: user?.name ?? "Volunteer demo", confidence: 76 }); setReportOpen(false); setToast("Report sent to the command center"); }}><Send size={16} /> Send report</button></div></div>}</div>;
 }
 
 export default function Home() {
