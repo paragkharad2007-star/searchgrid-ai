@@ -6,7 +6,8 @@ type TrafficRouteMapProps = { origin?: { lat: number; lng: number }; destination
 export default function TrafficRouteMap({ origin = { lat: 13.0827, lng: 80.2707 }, destination = { lat: 13.0831, lng: 80.2702 } }: TrafficRouteMapProps) {
   const [eta, setEta] = useState("Calculating live ETA…");
   const [traffic, setTraffic] = useState("Checking traffic");
-  return <div className="traffic-route-map"><MapView initialCenter={origin} initialZoom={17} onMapReady={(map) => {
+  const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&travelmode=walking`;
+  return <div className="traffic-route-map"><MapView initialCenter={origin} initialZoom={17} onMapError={() => { setEta("Live route unavailable"); setTraffic("Open Google Maps for directions"); }} onMapReady={(map) => {
     const directionsService = new google.maps.DirectionsService();
     const renderer = new google.maps.DirectionsRenderer({ map, suppressMarkers: false, preserveViewport: false });
     new google.maps.TrafficLayer().setMap(map);
@@ -17,5 +18,5 @@ export default function TrafficRouteMap({ origin = { lat: 13.0827, lng: 80.2707 
       setEta(leg?.duration?.text ?? "2 min");
       setTraffic("Live map traffic layer enabled");
     });
-  }} /><div className="traffic-route-overlay"><span className="status-dot" /> <strong>{eta}</strong><small>{traffic}</small></div></div>;
+  }} /><div className="traffic-route-overlay"><span className="status-dot" /> <strong>{eta}</strong><small>{traffic}</small>{eta === "Live route unavailable" && <a href={googleMapsUrl} target="_blank" rel="noreferrer">Open directions</a>}</div></div>;
 }
