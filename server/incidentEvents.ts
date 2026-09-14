@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 export type IncidentEvent = {
-  type: "sighting_reported" | "zone_completed" | "ai_recalculated" | "assignment_changed";
+  type: "sighting_reported" | "zone_completed" | "ai_recalculated" | "assignment_changed" | "incident_created" | "incident_resolved" | "volunteer_location_updated";
   incidentCode: string;
   payload: Record<string, unknown>;
   emittedAt: number;

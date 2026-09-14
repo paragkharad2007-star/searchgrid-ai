@@ -49,8 +49,9 @@ import LiveVenueMap from "@/components/LiveVenueMap";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useIncidentRealtime, type IncidentRealtimeEvent } from "@/hooks/useIncidentRealtime";
+import AdminPanel from "@/pages/AdminPanel";
 
-type Mode = "command" | "volunteer";
+type Mode = "command" | "volunteer" | "admin";
 type ZoneStatus = "searching" | "queued" | "covered" | "alert";
 type Priority = "HIGH" | "MEDIUM" | "LOW";
 
@@ -128,8 +129,8 @@ function ScoreBar({ score, compact = false }: { score: number; compact?: boolean
   );
 }
 
-function VenueMap({ zones, selectedId, onSelect }: { zones: Zone[]; selectedId: string; onSelect: (zone: Zone) => void }) {
-  return <LiveVenueMap zones={zones} selectedId={selectedId} onSelect={(mapZone) => onSelect(zones.find((zone) => zone.id === mapZone.id) ?? zones[0])} />;
+function VenueMap({ zones, selectedId, onSelect, volunteerLocations }: { zones: Zone[]; selectedId: string; onSelect: (zone: Zone) => void; volunteerLocations: Record<string, { lat: number; lng: number; accuracy: number }> }) {
+  return <LiveVenueMap zones={zones} selectedId={selectedId} volunteerLocations={volunteerLocations} onSelect={(mapZone) => onSelect(zones.find((zone) => zone.id === mapZone.id) ?? zones[0])} />;
 }
 
 function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => void; mode: Mode }) {
@@ -146,6 +147,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [toast, setToast] = useState("");
   const [sightingBoost, setSightingBoost] = useState(12);
+  const [volunteerLocations, setVolunteerLocations] = useState<Record<string, { lat: number; lng: number; accuracy: number }>>({});
 
   const handleRealtime = useCallback((event: IncidentRealtimeEvent) => {
     if (event.type === "sighting_reported") {
@@ -161,6 +163,10 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
       setToast(`Live update · ${zone} marked searched`);
     }
     if (event.type === "ai_recalculated" || event.type === "assignment_changed") setToast("Live operations update · assignments refreshed");
+    if (event.type === "volunteer_location_updated") {
+      const payload = event.payload as { volunteerId?: string; lat?: number; lng?: number; accuracy?: number };
+      if (payload.volunteerId && payload.lat !== undefined && payload.lng !== undefined) setVolunteerLocations((current) => ({ ...current, [payload.volunteerId as string]: { lat: payload.lat as number, lng: payload.lng as number, accuracy: payload.accuracy ?? 0 } }));
+    }
   }, []);
 
   useIncidentRealtime("CX1008", handleRealtime);
@@ -233,7 +239,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
         <div className="topbar-actions"><div className="time-readout"><span>{formatClock(now)}</span><small>LOCAL TIME · UTC+05:30</small></div><button className="icon-button" aria-label="Notifications"><Bell size={17} /><i /></button><button className="avatar-button">{user?.name?.slice(0, 2).toUpperCase() ?? "OC"}<span>{roleLabel}</span></button></div>
       </header>
 
-      <div className="view-switcher"><div className="view-switcher-inner"><button className={cn(mode === "command" && "active")} onClick={() => onModeChange("command")}><Laptop size={15} /> Command Center</button><button className={cn(mode === "volunteer" && "active")} onClick={() => onModeChange("volunteer")}><Smartphone size={15} /> Volunteer PWA</button></div><div className="sync-strip"><Wifi size={13} /> Live sync <span>•</span> Last update {formatClock(now)}</div></div>
+      <div className="view-switcher"><div className="view-switcher-inner"><button className={cn(mode === "command" && "active")} onClick={() => onModeChange("command")}><Laptop size={15} /> Command Center</button><button className={cn(mode === "volunteer" && "active")} onClick={() => onModeChange("volunteer")}><Smartphone size={15} /> Volunteer PWA</button><button className={cn(mode === "admin" && "active")} onClick={() => onModeChange("admin")}><ShieldCheck size={15} /> Admin</button></div><div className="sync-strip"><Wifi size={13} /> Live sync <span>•</span> Last update {formatClock(now)}</div></div>
 
       <main className="dashboard-content">
         <div className="page-heading"><div><p className="eyebrow">INCIDENT  /  CX1008  /  ROUND 1</p><h1>City Festival Ground <span>·</span> <em>Live Operations</em></h1></div><div className="heading-actions"><button className="secondary-button" onClick={() => setShowIncidentForm(true)}><SlidersHorizontal size={16} /> Incident details</button><button className="primary-button" onClick={reportSighting}><MessageSquareWarning size={16} /> Report sighting</button></div></div>
@@ -246,7 +252,7 @@ function CommandCenter({ onModeChange, mode }: { onModeChange: (mode: Mode) => v
         </div>
 
         <div className="command-grid">
-          <section className="map-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Radio size={13} /> PROBABILITY HEATMAP</div><h2>Venue search grid</h2></div><div className="panel-header-actions"><button className={cn("secondary-button small", isRecalculating && "button-loading")} onClick={() => recalculate("manual refresh")}><RefreshCw size={14} className={cn(isRecalculating && "spin")} /> {isRecalculating ? "Recalculating" : "Recalculate"}</button><button className="icon-button subtle" aria-label="Map options"><Menu size={16} /></button></div></div><div className="map-meta"><span><span className="pulse-dot" /> AI PRIORITIES LIVE</span><span>12 zones · {activeCount} actively searching</span><span>Coverage {coveredCount}/{zones.length}</span></div><VenueMap zones={zones} selectedId={selectedId} onSelect={(zone) => setSelectedId(zone.id)} /><div className="map-caption"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations.</span><button onClick={() => setToast("The model blends distance, time, crowd flow, pathway, sighting, venue feature and searched-area penalty.")}>How scoring works <ChevronRight size={13} /></button></div></section>
+          <section className="map-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Radio size={13} /> PROBABILITY HEATMAP</div><h2>Venue search grid</h2></div><div className="panel-header-actions"><button className={cn("secondary-button small", isRecalculating && "button-loading")} onClick={() => recalculate("manual refresh")}><RefreshCw size={14} className={cn(isRecalculating && "spin")} /> {isRecalculating ? "Recalculating" : "Recalculate"}</button><button className="icon-button subtle" aria-label="Map options"><Menu size={16} /></button></div></div><div className="map-meta"><span><span className="pulse-dot" /> AI PRIORITIES LIVE</span><span>12 zones · {activeCount} actively searching</span><span>Coverage {coveredCount}/{zones.length}</span></div><VenueMap zones={zones} selectedId={selectedId} volunteerLocations={volunteerLocations} onSelect={(zone) => setSelectedId(zone.id)} /><div className="map-caption"><Info size={14} /><span>AI predictions are search priorities, not guaranteed locations.</span><button onClick={() => setToast("The model blends distance, time, crowd flow, pathway, sighting, venue feature and searched-area penalty.")}>How scoring works <ChevronRight size={13} /></button></div></section>
 
           <aside className="zone-panel panel-card"><div className="panel-header"><div><div className="panel-kicker"><Target size={13} /> SELECTED ZONE</div><h2>Zone {selected.id}</h2></div><span className={cn("status-tag", selected.status)}>{selected.status === "searching" ? "SEARCHING" : selected.status === "covered" ? "COVERED" : selected.status === "alert" ? "UPDATED" : "QUEUED"}</span></div><div className="zone-detail-name">{selected.name}</div><div className="priority-score"><span>AI SEARCH PRIORITY</span><strong>{selected.score}%</strong><ScoreBar score={selected.score} /></div><div className="why-block"><div className="why-title"><Sparkles size={14} /> WHY THIS ZONE?</div><ul>{selected.features.map((feature) => <li key={feature}><CheckCircle2 size={14} /> {feature}</li>)}</ul></div><div className="assignment-block"><div className="assignment-label">ASSIGNED SEARCH TEAM <span>{selected.volunteers} volunteers</span></div><div className="assigned-person"><div className="person-avatar">{selected.assigned ?? "—"}</div><div><strong>{selected.assigned ?? "Unassigned"}</strong><small>{selected.status === "searching" ? "On route · 180 m away" : "Available for dispatch"}</small></div><button className="icon-button subtle"><Navigation size={15} /></button></div></div><button className="full-button" onClick={() => markSearched(selected.id)} disabled={selected.status === "covered"}>{selected.status === "covered" ? <><CheckCircle2 size={16} /> Zone already covered</> : <><Check size={16} /> Mark zone searched</>}</button><div className="replan-note"><Zap size={13} /><span>Assignments update automatically when new sighting data arrives.</span></div></aside>
         </div>
@@ -266,6 +272,7 @@ function VolunteerView({ onModeChange }: { onModeChange: (mode: Mode) => void })
   const { user } = useAuth();
   const reportMutation = trpc.incident.reportSighting.useMutation();
   const markMutation = trpc.incident.markZoneSearched.useMutation();
+  const locationMutation = trpc.volunteer.updateLocation.useMutation();
   const [searched, setSearched] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -275,6 +282,14 @@ function VolunteerView({ onModeChange }: { onModeChange: (mode: Mode) => void })
     if (event.type === "assignment_changed") setToast("Assignment changed · refresh your mission");
   }, []);
   useIncidentRealtime("CX1008", handleRealtime);
+
+  useEffect(() => {
+    if (offline || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition((position) => {
+      locationMutation.mutate({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy });
+    }, () => setToast("GPS permission needed for live volunteer tracking"), { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [offline]);
 
   const completeSearch = () => {
     setSearched(true);
@@ -289,7 +304,7 @@ function VolunteerView({ onModeChange }: { onModeChange: (mode: Mode) => void })
 }
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>(() => window.location.hash === "#volunteer" ? "volunteer" : "command");
-  const changeMode = (nextMode: Mode) => { setMode(nextMode); window.history.replaceState({}, "", nextMode === "volunteer" ? "#volunteer" : "#command"); };
-  return mode === "volunteer" ? <VolunteerView onModeChange={changeMode} /> : <CommandCenter mode={mode} onModeChange={changeMode} />;
+  const [mode, setMode] = useState<Mode>(() => window.location.hash === "#volunteer" ? "volunteer" : window.location.hash === "#admin" ? "admin" : "command");
+  const changeMode = (nextMode: Mode) => { setMode(nextMode); window.history.replaceState({}, "", nextMode === "volunteer" ? "#volunteer" : nextMode === "admin" ? "#admin" : "#command"); };
+  return mode === "volunteer" ? <VolunteerView onModeChange={changeMode} /> : mode === "admin" ? <AdminPanel onBack={() => changeMode("command")} /> : <CommandCenter mode={mode} onModeChange={changeMode} />;
 }

@@ -31,4 +31,18 @@ describe("incident coordination API", () => {
   it("requires a coordinator role to seed persistent incident data", async () => {
     await expect(appRouter.createCaller(contextFor("user")).incident.seed()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
+
+  it("requires coordinator access for user administration", async () => {
+    await expect(appRouter.createCaller(contextFor("user")).admin.users()).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("accepts authenticated volunteer GPS updates and broadcasts them", async () => {
+    const received: unknown[] = [];
+    const listener = (event: unknown) => received.push(event);
+    incidentEvents.on("incident", listener);
+    const location = await appRouter.createCaller(contextFor("user")).volunteer.updateLocation({ lat: 13.0827, lng: 80.2707, accuracy: 12 });
+    incidentEvents.off("incident", listener);
+    expect(location.lat).toBe(13.0827);
+    expect(received).toHaveLength(1);
+  });
 });

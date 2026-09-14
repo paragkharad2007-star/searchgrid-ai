@@ -7,7 +7,7 @@ export function useIncidentRealtime(incidentCode: string, onEvent: (event: Incid
   useEffect(() => {
     const socket: Socket = io({ transports: ["websocket", "polling"], withCredentials: true });
     socket.on("connect", () => socket.emit("join_incident", incidentCode));
-    const types = ["sighting_reported", "zone_completed", "ai_recalculated", "assignment_changed", "connectivity_changed"];
+    const types = ["sighting_reported", "zone_completed", "ai_recalculated", "assignment_changed", "incident_created", "incident_resolved", "volunteer_location_updated", "connectivity_changed"];
     types.forEach((type) => socket.on(type, (event) => onEvent({ type, ...(event ?? {}) })));
     return () => { socket.disconnect(); };
   }, [incidentCode, onEvent]);

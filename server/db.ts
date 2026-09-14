@@ -35,6 +35,20 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
+export async function listUsers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({ id: users.id, openId: users.openId, name: users.name, email: users.email, role: users.role, lastSignedIn: users.lastSignedIn }).from(users).orderBy(desc(users.lastSignedIn)).limit(100);
+}
+
+export async function updateUserRole(id: number, role: "admin" | "user") {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.update(users).set({ role }).where(eq(users.id, id));
+  const rows = await db.select({ id: users.id, openId: users.openId, name: users.name, email: users.email, role: users.role, lastSignedIn: users.lastSignedIn }).from(users).where(eq(users.id, id)).limit(1);
+  return rows[0];
+}
+
 export async function getIncidentByCode(code: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -63,4 +77,18 @@ export async function insertSighting(input: { incidentId: number; zone: string; 
   await db.insert(sightings).values(input);
   const rows = await db.select().from(sightings).where(eq(sightings.incidentId, input.incidentId)).orderBy(desc(sightings.createdAt)).limit(1);
   return rows[0];
+}
+
+export async function createIncident(input: { code: string; title: string; venue: string; lastSeenZone: string; lastSeenAt: Date }) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(incidents).values(input);
+  return getIncidentByCode(input.code);
+}
+
+export async function resolveIncident(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.update(incidents).set({ status: "resolved" }).where(eq(incidents.code, code));
+  return getIncidentByCode(code);
 }
